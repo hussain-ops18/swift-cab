@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Swift Cab</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<style>
+  :root {
+    --map-bg:#f8f9fa;
+    --sheet:#fff;
+    --ink:#14181f;
+    --muted:#6b7380;
+    --accent:#f5a400;
+    --go:#16a34a;
+    --red:#ef4444;
+    --line:#e6e8ec;
+    --soft:#f3f4f6;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; font-family:'Segoe UI',system-ui,-apple-system,Arial,sans-serif; -webkit-tap-highlight-color:transparent; }
+  html,body { height:100%; background:var(--map-bg); overflow:hidden; }
+  body { position:fixed; inset:0; display:flex; flex-direction:column; }
+
+  /* ===== MAP AREA (top 50%) ===== */
+  .map {
+    position:relative; flex:0 0 50%; overflow:hidden;
+    background:var(--map-bg);
+  }
+  #renderCanvas { position:absolute; inset:0; width:100%; height:100%; display:block; }
+  .map-overlay {
+    position:absolute; inset:0; pointer-events:none;
+    background:radial-gradient(ellipse at center, transparent 65%, rgba(0,0,0,.06) 100%);
+  }
+
+  /* Header card (floating) */
+  .header {
+    position:absolute; top:calc(10px + env(safe-area-inset-top,0px)); left:12px; right:12px; z-index:10;
+    padding:10px 14px;
+    display:flex; align-items:center; gap:12px;
+    background:#fff;
+    border-radius:14px;
+    box-shadow:0 4px 20px rgba(0,0,0,.08), 0 1px 3px rgba(0,0,0,.06);
+  }
+  .icon-btn {
+    width:36px; height:36px; border-radius:10px; border:0; flex:none;
+    background:var(--soft); color:var(--ink);
+    font-size:15px; cursor:pointer; display:grid; place-items:center;
+  }
+  .icon-btn:active { transform:scale(.95); }
+  .brand { flex:1; color:var(--ink); font-size:16px; font-weight:700; letter-spacing:-.2px; }
+  .brand small { display:block; color:var(--muted); font-size:10px; font-weight:600; letter-spacing:.6px; margin-top:1px; }
+  .avatar-me {
+    width:36px; height:36px; border-radius:50%;
+    background:var(--accent); color:#14181f; font-weight:800; font-size:13px;
+    display:grid; place-items:center; box-shadow:0 2px 10px rgba(245,164,0,.35);
+  }
+
+  /* Live status badge on map */
+  .map-badge {
+    position:absolute; top:calc(68px + env(safe-area-inset-top,0px)); left:50%; transform:translateX(-50%);
+    background:#fff;
+    color:var(--ink); padding:8px 16px; border-radius:22px;
+    font-size:13px; font-weight:600; display:flex; align-items:center; gap:8px;
+    opacity:0; pointer-events:none; transition:opacity .3s, transform .3s;
+    box-shadow:0 4px 16px rgba(0,0,0,.12);
+    white-space:nowrap;
+    transform:translate(-50%,-6px);
+  }
+  .map-badge.show { opacity:1; transform:translate(-50%,0); }
+  .map-badge .pulse-dot {
+    width:8px; height:8px; border-radius:50%; background:var(--accent);
+    box-shadow:0 0 0 4px rgba(245,164,0,.2);
+    animation:mapPulse 1.4s infinite;
+  }
+  @keyframes mapPulse { 50% { box-shadow:0 0 0 7px rgba(245,164,0,.05); } }
+
+  /* ===== SHEET (bottom 50%) ===== */
+  .sheet {
+    flex:1; background:var(--sheet); color:var(--ink);
+    border-radius:22px 22px 0 0;
+    margin-top:-22px; position:relative; z-index:5;
+    box-shadow:0 -10px 40px rgba(0,0,0,.08);
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  .grab { width:40px; height:4px; border-radius:4px; background:var(--line); margin:10px auto 4px; flex:none; }
+  .sheet-scroll {
+    overflow-y:auto; padding:6px 20px calc(20px + env(safe-area-inset-bottom,0px));
+    -webkit-overflow-scrolling:touch;
+  }
+  .sheet-scroll::-webkit-scrollbar { width:0; }
+
+  /* Fields */
+  .field { display:flex; align-items:center; gap:12px; padding:12px 4px; border-bottom:1px solid var(--line); }
+  .field:last-of-type { border-bottom:0; }
+  .field-icon { width:34px; height:34px; border-radius:10px; flex:none; display:grid; place-items:center; font-size:14px; font-weight:800; }
+  .field-icon.pickup { background:rgba(22,163,74,.12); color:var(--go); }
+  .field-icon.drop { background:rgba(239,68,68,.12); color:var(--red); }
+  .field-body { flex:1; min-width:0; }
+  .field-label { font-size:10px; color:var(--muted); font-weight:700; text-transform:uppercase; letter-spacing:.6px; }
+  .field-value { font-size:14px; font-weight:600; color:var(--ink); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .field input {
+    width:100%; border:0; outline:0; background:transparent;
+    font-size:14px; font-weight:600; color:var(--ink); margin-top:2px; padding:0; font-family:inherit;
+  }
+  .field input::placeholder { color:var(--muted); font-weight:500; }
+
+  .section-title { font-size:12px; font-weight:700; color:var(--ink); margin:14px 0 8px; letter-spacing:.2px; }
+
+  /* Cab options */
+  .cab-list { display:flex; flex-direction:column; gap:8px; }
+  .cab-opt {
+    display:flex; align-items:center; gap:12px;
+    padding:12px; border-radius:12px; cursor:pointer;
+    border:2px solid var(--line); background:#fff;
+    transition:border-color .2s, background .2s;
+  }
+  .cab-opt.selected { border-color:var(--accent); background:rgba(245,164,0,.06); }
+  .cab-emoji { font-size:24px; flex:none; width:36px; text-align:center; }
+  .cab-info { flex:1; min-width:0; }
+  .cab-info b { font-size:14px; font-weight:700; display:block; }
+  .cab-info span { font-size:11px; color:var(--muted); display:block; margin-top:2px; }
+  .cab-price { text-align:right; flex:none; }
+  .cab-price b { font-size:14px; font-weight:700; color:var(--ink); }
+  .cab-price span { font-size:10px; color:var(--muted); display:block; }
+
+  /* Primary CTA */
+  .primary-btn {
+    width:100%; border:0; border-radius:13px;
+    padding:15px; font-size:15px; font-weight:700;
+    cursor:pointer; margin-top:16px;
+    background:var(--accent); color:#14181f;
+    box-shadow:0 6px 18px rgba(245,164,0,.3);
+    transition:transform .12s;
+  }
+  .primary-btn:active { transform:scale(.98); }
+
+  /* Ride status */
+  .ride-status { display:flex; align-items:center; justify-content:space-between; padding:4px 0 12px; }
+  .ride-status h2 { font-size:18px; font-weight:700; }
+  .ride-status .eta { font-size:18px; font-weight:700; font-variant-numeric:tabular-nums; color:var(--accent); }
+  .ride-status.arrived h2, .ride-status.arrived .eta { color:var(--go); }
+
+  .progress { height:4px; background:var(--line); border-radius:4px; margin:0 0 14px; overflow:hidden; }
+  .progress i { display:block; height:100%; width:0; background:var(--accent); border-radius:4px; transition:width .3s linear; }
+  .ride-status.arrived ~ .progress i { background:var(--go); }
+
+  .driver { display:flex; align-items:center; gap:12px; padding-bottom:12px; border-bottom:1px solid var(--line); }
+  .driver .avatar { width:44px; height:44px; border-radius:50%; background:#1f2630; color:#fff; display:grid; place-items:center; font-weight:700; flex:none; font-size:14px; }
+  .driver .info { flex:1; min-width:0; }
+  .driver .info b { font-size:15px; }
+  .driver .info span { display:block; color:var(--muted); font-size:12px; margin-top:2px; }
+  .plate { border:2px solid var(--ink); border-radius:8px; padding:3px 9px; font-weight:700; font-size:13px; letter-spacing:.4px; white-space:nowrap; }
+
+  .otp-row { display:flex; align-items:center; justify-content:space-between; padding:12px 0; border-bottom:1px solid var(--line); }
+  .otp-row small { color:var(--muted); font-size:12px; }
+  .otp { display:flex; gap:5px; }
+  .otp span { width:30px; height:36px; border-radius:8px; background:var(--soft); display:grid; place-items:center; font-weight:700; font-size:17px; }
+
+  .action-row { display:flex; gap:10px; padding-top:12px; }
+  .btn {
+    flex:1; border:0; border-radius:11px; padding:12px 8px;
+    font-size:14px; font-weight:600; cursor:pointer;
+    background:var(--soft); color:var(--ink);
+  }
+  .btn:active { transform:scale(.97); }
+  .btn.primary { background:var(--ink); color:#fff; }
+
+  /* Rating */
+  .rating { text-align:center; padding:10px 0 6px; }
+  .rating .done-icon { width:56px; height:56px; border-radius:50%; margin:0 auto 12px; background:rgba(22,163,74,.12); color:var(--go); display:grid; place-items:center; font-size:28px; }
+  .rating h2 { font-size:20px; font-weight:700; margin-bottom:4px; }
+  .rating p { color:var(--muted); font-size:13px; }
+  .rating .fare { font-size:28px; font-weight:800; margin:12px 0 4px; }
+  .rating .fare small { font-size:12px; color:var(--muted); font-weight:600; display:block; margin-top:3px; }
+
+  .stars { display:flex; justify-content:center; gap:6px; margin:14px 0 6px; }
+  .star {
+    width:40px; height:40px; border:0; background:var(--soft);
+    border-radius:11px; font-size:20px; cursor:pointer;
+    display:grid; place-items:center; color:#c9cdd4;
+  }
+  .star.active { background:rgba(245,164,0,.15); color:var(--accent); }
+
+  .tip-row { display:flex; gap:8px; margin:12px 0 4px; }
+  .tip { flex:1; border:2px solid var(--line); background:#fff; border-radius:10px; padding:9px; font-weight:700; font-size:13px; cursor:pointer; color:var(--ink); }
+  .tip.active { border-color:var(--accent); background:rgba(245,164,0,.08); }
+
+  /* Overlay */
+  .overlay {
+    position:fixed; inset:0; z-index:40;
+    display:grid; place-items:center;
+    background:rgba(20,24,31,.55); backdrop-filter:blur(8px);
+    opacity:0; pointer-events:none; transition:opacity .35s;
+  }
+  .overlay.show { opacity:1; pointer-events:auto; }
+  .ov-card { background:#fff; color:var(--ink); border-radius:18px; padding:28px 34px; text-align:center; box-shadow:0 24px 70px rgba(0,0,0,.35); transform:translateY(10px); transition:transform .4s; max-width:320px; }
+  .overlay.show .ov-card { transform:translateY(0); }
+  .spinner { width:44px; height:44px; margin:0 auto 16px; border:3px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:spin .9s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .ov-card h3 { font-size:17px; font-weight:700; }
+  .ov-card p { color:var(--muted); font-size:12px; margin-top:6px; line-height:1.5; }
+
+  /* Toast */
+  .toast { position:fixed; top:calc(60px + env(safe-area-inset-top,0px)); left:50%; transform:translate(-50%,-16px); background:#14181f; color:#fff; padding:10px 18px; border-radius:10px; font-size:13px; font-weight:600; opacity:0; pointer-events:none; transition:opacity .3s, transform .3s; z-index:50; }
+  .toast.show { opacity:1; transform:translate(-50%,0); }
+</style>
+</head>
+<body>
+<div class="map">
+  <canvas id="renderCanvas"></canvas>
+  <div class="map-overlay"></div>
+
+  <header class="header">
+    <button class="icon-btn">☰</button>
+    <div class="brand">Swift Cab<small>RIDE • ANYTIME</small></div>
+    <div class="avatar-me">RK</div>
+  </header>
+
+  <div class="map-badge" id="mapBadge">
+    <span class="pulse-dot"></span>
+    <span id="badgeText">Driver on the way</span>
+  </div>
+</div>
+
+<div class="sheet">
+  <div class="grab"></div>
+
+  <div class="sheet-scroll" id="stageBooking">
+    <div class="field">
+      <div class="field-icon pickup">●</div>
+      <div class="field-body">
+        <div class="field-label">Pickup</div>
+        <div class="field-value">Gate 2, Meenakshi Nagar</div>
+      </div>
+    </div>
+    <div class="field">
+      <div class="field-icon drop">◆</div>
+      <div class="field-body">
+        <div class="field-label">Drop</div>
+        <input id="dropInput" type="text" placeholder="Where to?" value="Central Mall, Anna Salai">
+      </div>
+    </div>
+
+    <div class="section-title">Choose your ride</div>
+    <div class="cab-list" id="cabList">
+      <div class="cab-opt" data-type="mini" data-fare="80">
+        <div class="cab-emoji">🚗</div>
+        <div class="cab-info"><b>Mini</b><span>Affordable • 3 min away</span></div>
+        <div class="cab-price"><b>₹80</b><span>~4 km</span></div>
+      </div>
+      <div class="cab-opt selected" data-type="sedan" data-fare="120">
+        <div class="cab-emoji">🚙</div>
+        <div class="cab-info"><b>Sedan</b><span>Comfy • 4 min away</span></div>
+        <div class="cab-price"><b>₹120</b><span>~4 km</span></div>
+      </div>
+      <div class="cab-opt" data-type="suv" data-fare="180">
+        <div class="cab-emoji">🚐</div>
+        <div class="cab-info"><b>SUV</b><span>Spacious • 6 min away</span></div>
+        <div class="cab-price"><b>₹180</b><span>~4 km</span></div>
+      </div>
+    </div>
+
+    <button class="primary-btn" id="confirmBtn">Confirm Sedan • ₹120</button>
+  </div>
+
+  <div class="sheet-scroll" id="stageRide" style="display:none">
+    <div class="ride-status" id="rideStatus">
+      <h2 id="rideTitle">Your driver is on the way</h2>
+      <div class="eta" id="rideEta">1:00</div>
+    </div>
+    <div class="progress"><i id="rideBar"></i></div>
+
+    <div class="driver">
+      <div class="avatar">RK</div>
+      <div class="info">
+        <b id="driverName">Rajesh K.</b>
+        <span id="driverCar">4.9 ★ • Swift Sedan, Yellow</span>
+      </div>
+      <div class="plate" id="driverPlate">TN 58 AB 1234</div>
+    </div>
+
+    <div class="otp-row">
+      <small>Share OTP with driver</small>
+      <div class="otp"><span>4</span><span>8</span><span>2</span><span>1</span></div>
+    </div>
+
+    <div class="action-row">
+      <button class="btn">📞 Call</button>
+      <button class="btn">💬 Message</button>
+      <button class="btn primary" id="cancelBtn">Cancel</button>
+    </div>
+  </div>
+
+  <div class="sheet-scroll" id="stageRating" style="display:none">
+    <div class="rating">
+      <div class="done-icon">✓</div>
+      <h2>Ride completed</h2>
+      <p id="ratingSub">Hope you enjoyed the ride</p>
+      <div class="fare" id="fareAmount">₹120<small>Total fare</small></div>
+    </div>
+
+    <div class="section-title" style="text-align:center">Rate your driver</div>
+    <div class="stars" id="stars">
+      <button class="star" data-v="1">★</button>
+      <button class="star" data-v="2">★</button>
+      <button class="star" data-v="3">★</button>
+      <button class="star" data-v="4">★</button>
+      <button class="star" data-v="5">★</button>
+    </div>
+
+    <div class="section-title" style="text-align:center;margin-top:12px">Add a tip</div>
+    <div class="tip-row" id="tipRow">
+      <button class="tip" data-tip="0">No tip</button>
+      <button class="tip" data-tip="20">₹20</button>
+      <button class="tip" data-tip="50">₹50</button>
+    </div>
+
+    <button class="primary-btn" id="doneBtn">Done</button>
+  </div>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="ov-card">
+    <div class="spinner"></div>
+    <h3 id="ovTitle">Finding your cab…</h3>
+    <p id="ovSub">Matching you with a nearby driver</p>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ===== CONFIG ===== */
+const ROUTE_SECONDS = 22;
+const SEARCH_MS     = 2000;
+const ASSIGN_MS     = 800;
+const CAR_LENGTH    = 6.0;   // PERUSA — screen-la clear-a theriyum
+const PIN_HEIGHT    = 3.2;   // PERUSA
+const PAINT_COLOR   = 0xf2a600;
+const ROUTE_WIDTH   = 0.7;   // route line thickness
+
+/* ===== MAP COLORS (light theme) ===== */
+const MAP_BG = 0xf8f9fa;      // off-white map
+const ROUTE_LIGHT = 0xf5a400; // amber route (matches app accent)
+
+/* ===== RENDERER ===== */
+const canvas = document.getElementById('renderCanvas');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(MAP_BG);
+
+const camera = new THREE.PerspectiveCamera(38, canvas.clientWidth / canvas.clientHeight, 0.1, 400);
+
+/* ===== LIGHTS (soft, studio-ish) ===== */
+scene.add(new THREE.HemisphereLight(0xffffff, 0xcfd4dc, 0.9));
+const sun = new THREE.DirectionalLight(0xffffff, 1.0);
+sun.position.set(-10, 30, 20);
+sun.castShadow = true;
+sun.shadow.mapSize.set(1024, 1024);
+sun.shadow.camera.left = -25;
+sun.shadow.camera.right = 25;
+sun.shadow.camera.top = 25;
+sun.shadow.camera.bottom = -25;
+sun.shadow.camera.near = 1;
+sun.shadow.camera.far = 80;
+sun.shadow.bias = -0.0005;
+scene.add(sun);
+
+// gentle fill
+const fill = new THREE.DirectionalLight(0xc8d0dc, 0.4);
+fill.position.set(15, 20, -10);
+scene.add(fill);
+
+/* ===== HELPERS ===== */
+let seed = 11;
+const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+
+function radialTex() {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d'), gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  gr.addColorStop(0, 'rgba(255,255,255,1)');
+  gr.addColorStop(0.25, 'rgba(255,255,255,.5)');
+  gr.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(c);
+}
+const glowMap = radialTex();
+
+function glowSprite(color, size, x, y, z, parent, opacity) {
+  opacity = opacity == null ? 1 : opacity;
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: glowMap, color, blending: THREE.AdditiveBlending,
+    depthWrite: false, transparent: true, opacity
+  }));
+  s.scale.set(size, size, 1); s.position.set(x, y, z); parent.add(s); return s;
+}
+
+/* ===== ROUTE PATH ===== */
+const path = new THREE.CatmullRomCurve3([
+  new THREE.Vector3(-8, 0, 10),
+  new THREE.Vector3(-4, 0, 8),
+  new THREE.Vector3(0, 0, 6),
+  new THREE.Vector3(4, 0, 4),
+  new THREE.Vector3(8, 0, 2),
+  new THREE.Vector3(10, 0, 0),
+  new THREE.Vector3(10, 0, -4),
+  new THREE.Vector3(8, 0, -8),
+  new THREE.Vector3(4, 0, -10),
+  new THREE.Vector3(0, 0, -10),
+  new THREE.Vector3(-6, 0, -8),
+  new THREE.Vector3(-12, 0, -6)
+]);
+const pathLen = path.getLength();
+
+const PICKUP_T = 0.08;   // near start
+const DROP_T = 0.95;     // near end
+const PICKUP_POS = path.getPointAt(PICKUP_T);
+const DROP_POS = path.getPointAt(DROP_T);
+
+/* Rounded ribbon builder */
+function ribbon(width, y, mat, vScale) {
+  const N = 220, pos = [], uv = [], idx = [];
+  for (let i = 0; i <= N; i++) {
+    const t = i / N, p = path.getPointAt(t), tan = path.getTangentAt(t);
+    const nx = -tan.z, nz = tan.x;
+    pos.push(p.x + nx * width / 2, y, p.z + nz * width / 2,
+             p.x - nx * width / 2, y, p.z - nz * width / 2);
+    uv.push(0, t * pathLen / vScale, 1, t * pathLen / vScale);
+    if (i < N) { const a = i * 2; idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3); }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx); g.computeVertexNormals();
+  const m = new THREE.Mesh(g, mat); m.receiveShadow = true; scene.add(m); return m;
+}
+
+/* Two-layer route: soft light base + solid amber on top */
+ribbon(ROUTE_WIDTH + 0.35, 0.02, new THREE.MeshBasicMaterial({
+  color: ROUTE_LIGHT, transparent: true, opacity: 0.15
+}), 10);
+
+const routeTopMat = new THREE.MeshBasicMaterial({
+  color: ROUTE_LIGHT, transparent: true, opacity: 0.85
+});
+const routeTop = ribbon(ROUTE_WIDTH, 0.04, routeTopMat, 10);
+
+/* Dashed overlay (moving animation feel) — thin white dashes on route */
+const dashMat = new THREE.MeshBasicMaterial({
+  color: 0xffffff, transparent: true, opacity: 0.55
+});
+ribbon(0.15, 0.05, dashMat, 6);
+
+/* ===== BUILDINGS — REMOVED (clean map) ===== */
+
+/* ===== CAR (swift_cab.glb) ===== */
+const carRig = new THREE.Group();
+const carYaw = new THREE.Group();
+carRig.add(carYaw);
+scene.add(carRig);
+
+function normalizeModel(obj, targetSize, useHeight) {
+  const box = new THREE.Box3().setFromObject(obj);
+  const size = box.getSize(new THREE.Vector3());
+  const scale = targetSize / (useHeight ? size.y : Math.max(size.x, size.z));
+  obj.scale.setScalar(scale);
+
+  // recentre & put base at y=0
+  const b2 = new THREE.Box3().setFromObject(obj);
+  const c = b2.getCenter(new THREE.Vector3());
+  obj.position.x -= c.x;
+  obj.position.z -= c.z;
+  obj.position.y -= b2.min.y;
+
+  const holder = new THREE.Group();
+  holder.add(obj);
+  return holder;
+}
+
+function upgradeMaterials(root) {
+  const area = new Map();
+  root.traverse(n => {
+    if (!n.isMesh) return;
+    n.castShadow = true;
+    n.receiveShadow = true;
+    const s = new THREE.Box3().setFromObject(n).getSize(new THREE.Vector3());
+    const a = 2 * (s.x * s.y + s.y * s.z + s.z * s.x);
+    [].concat(n.material).forEach(m => area.set(m, (area.get(m) || 0) + a));
+  });
+  let body = [...area.keys()].find(m => /body|paint|yellow|orange/i.test(m.name));
+  if (!body) body = [...area.entries()]
+    .filter(([m]) => m.map && !/glass|window|tire|tyre|wheel/i.test(m.name))
+    .sort((p, q) => q[1] - p[1])[0]?.[0];
+  const paint = new THREE.MeshPhysicalMaterial({
+    color: PAINT_COLOR == null ? 0xffffff : PAINT_COLOR,
+    map: PAINT_COLOR === null && body ? body.map : null,
+    metalness: 0.5, roughness: 0.32,
+    clearcoat: 1, clearcoatRoughness: 0.08, envMapIntensity: 1.2
+  });
+  root.traverse(n => {
+    if (!n.isMesh) return;
+    const swap = m => {
+      if (m === body) return paint;
+      if (/glass|window|wind|screen/i.test(m.name)) {
+        m.transparent = true; m.opacity = 0.5;
+        m.roughness = 0.08; m.metalness = 0.9;
+        m.envMapIntensity = 1.4;
+      }
+      if (m.map) m.map.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      m.needsUpdate = true; return m;
+    };
+    n.material = Array.isArray(n.material) ? n.material.map(swap) : swap(n.material);
+  });
+}
+
+function fallbackCar() {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshPhysicalMaterial({ color: 0xf2a600, metalness: .5, roughness: .3, clearcoat: 1 });
+  const b = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.9, 1.8), mat); b.position.y = 0.7; g.add(b);
+  const t = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.75, 1.55), mat); t.position.set(-0.1, 1.42, 0); g.add(t);
+  return g;
+}
+
+new THREE.GLTFLoader().load('./swift_cab.glb',
+  gltf => {
+    console.log('✅ swift_cab.glb loaded OK');
+    const m = normalizeModel(gltf.scene, CAR_LENGTH, false);
+    upgradeMaterials(m);
+    carYaw.add(m);
+  },
+  undefined,
+  err => {
+    console.error('❌ swift_cab.glb FAILED'); console.error(err);
+    carYaw.add(fallbackCar());
+  }
+);
+
+/* Contact shadow beneath the car */
+(function () {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 128;
+  const g = c.getContext('2d'), gr = g.createRadialGradient(128, 64, 10, 128, 64, 125);
+  gr.addColorStop(0, 'rgba(0,0,0,.45)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+  g.save(); g.scale(1, 0.5); g.translate(0, 64);
+  g.fillStyle = gr; g.fillRect(0, -64, 256, 256); g.restore();
+  const m = new THREE.Mesh(
+    new THREE.PlaneGeometry(CAR_LENGTH * 1.4, CAR_LENGTH * 0.65),
+    new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false })
+  );
+  m.rotation.x = -Math.PI / 2; m.position.y = 0.06;
+  carYaw.add(m);
+})();
+
+/* Small light dots (not glows) so car doesn't look toyish */
+const L = CAR_LENGTH / 2;
+
+/* ===== PINS (gps_pin.glb) — pickup + drop ===== */
+function makePinMarker(color) {
+  const rig = new THREE.Group();
+  const bob = new THREE.Group();
+  rig.add(bob);
+
+  // soft pulse ring on ground
+  const ringMat = new THREE.MeshBasicMaterial({
+    color, transparent: true, opacity: 0.7,
+    side: THREE.DoubleSide, depthWrite: false
+  });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(1.1, 1.35, 56), ringMat);
+  ring.rotation.x = -Math.PI / 2; ring.position.y = 0.05;
+  rig.add(ring);
+
+  // glow dot on ground
+  const dot = new THREE.Mesh(
+    new THREE.CircleGeometry(0.7, 40),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 })
+  );
+  dot.rotation.x = -Math.PI / 2; dot.position.y = 0.06;
+  rig.add(dot);
+
+  // outer glow sprite
+  glowSprite(color, 7, 0, 0.4, 0, rig, 0.5);
+
+  return { rig, bob, ring, ringMat };
+}
+
+function fallbackPin(color) {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.5 });
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.7, 24, 24), mat); head.position.y = 2; g.add(head);
+  const cone = new THREE.Mesh(new THREE.ConeGeometry(0.55, 1.3, 24), mat); cone.rotation.x = Math.PI; cone.position.y = 1.1; g.add(cone);
+  return g;
+}
+
+const pickupMarker = makePinMarker(0x16a34a);
+pickupMarker.rig.position.copy(PICKUP_POS);
+scene.add(pickupMarker.rig);
+
+const dropMarker = makePinMarker(0xef4444);
+dropMarker.rig.position.copy(DROP_POS);
+scene.add(dropMarker.rig);
+
+new THREE.GLTFLoader().load('./gps_pin.glb',
+  gltf => {
+    console.log('✅ gps_pin.glb loaded OK');
+
+    // pickup — green tint
+    const p1 = gltf.scene.clone(true);
+    const h1 = normalizeModel(p1, PIN_HEIGHT, true);
+    h1.traverse(n => {
+      if (n.isMesh) {
+        n.castShadow = true;
+        const mats = Array.isArray(n.material) ? n.material : [n.material];
+        mats.forEach(mat => {
+          mat.color = mat.color.clone();
+          mat.color.setHex(0x16a34a);
+          mat.emissive = new THREE.Color(0x16a34a);
+          mat.emissiveIntensity = 0.45;
+          mat.metalness = 0.4;
+          mat.roughness = 0.35;
+        });
+      }
+    });
+    pickupMarker.bob.add(h1);
+
+    // drop — red tint
+    const p2 = gltf.scene.clone(true);
+    const h2 = normalizeModel(p2, PIN_HEIGHT, true);
+    h2.traverse(n => {
+      if (n.isMesh) {
+        n.castShadow = true;
+        const mats = Array.isArray(n.material) ? n.material : [n.material];
+        mats.forEach(mat => {
+          mat.color = mat.color.clone();
+          mat.color.setHex(0xef4444);
+          mat.emissive = new THREE.Color(0xef4444);
+          mat.emissiveIntensity = 0.45;
+          mat.metalness = 0.4;
+          mat.roughness = 0.35;
+        });
+      }
+    });
+    dropMarker.bob.add(h2);
+  },
+  undefined,
+  err => {
+    console.error('❌ gps_pin.glb FAILED'); console.error(err);
+    pickupMarker.bob.add(fallbackPin(0x16a34a));
+    dropMarker.bob.add(fallbackPin(0xef4444));
+  }
+);
+
+/* ===== DOM ===== */
+const stageBooking = document.getElementById('stageBooking');
+const stageRide    = document.getElementById('stageRide');
+const stageRating  = document.getElementById('stageRating');
+const cabList      = document.getElementById('cabList');
+const confirmBtn   = document.getElementById('confirmBtn');
+const dropInput    = document.getElementById('dropInput');
+const overlay      = document.getElementById('overlay');
+const ovTitle      = document.getElementById('ovTitle');
+const ovSub        = document.getElementById('ovSub');
+const rideTitle    = document.getElementById('rideTitle');
+const rideEta      = document.getElementById('rideEta');
+const rideBar      = document.getElementById('rideBar');
+const rideStatus   = document.getElementById('rideStatus');
+const driverName   = document.getElementById('driverName');
+const driverCar    = document.getElementById('driverCar');
+const driverPlate  = document.getElementById('driverPlate');
+const cancelBtn    = document.getElementById('cancelBtn');
+const fareAmount   = document.getElementById('fareAmount');
+const ratingSub    = document.getElementById('ratingSub');
+const stars        = document.querySelectorAll('.star');
+const tips         = document.querySelectorAll('.tip');
+const doneBtn      = document.getElementById('doneBtn');
+const toastEl      = document.getElementById('toast');
+const mapBadge     = document.getElementById('mapBadge');
+const badgeText    = document.getElementById('badgeText');
+
+/* ===== STATE ===== */
+let cabType = 'sedan', cabFare = 120, cabLabel = 'Sedan';
+let state = 'idle';
+let rideStartMs = 0;
+let lastT = performance.now();
+let prevPos = path.getPointAt(0);
+let speed = 0, accel = 0, yawRate = 0;
+let ridePhase = 'approach';
+
+const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
+const easeInOut = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const clamp = THREE.MathUtils.clamp;
+
+/* Camera state */
+const camPos = new THREE.Vector3(0, 32, 26);
+const lookAtPt = new THREE.Vector3(0, 0, 0);
+camera.position.copy(camPos);
+camera.lookAt(lookAtPt);
+
+/* ===== UI HELPERS ===== */
+function showToast(msg, ms) {
+  ms = ms || 1800;
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => toastEl.classList.remove('show'), ms);
+}
+function setStage(stage) {
+  stageBooking.style.display = stage === 'booking' ? '' : 'none';
+  stageRide.style.display    = stage === 'ride'    ? '' : 'none';
+  stageRating.style.display  = stage === 'rating'  ? '' : 'none';
+}
+function hideMapBadge() { mapBadge.classList.remove('show'); }
+function showMapBadge(text) { badgeText.textContent = text; mapBadge.classList.add('show'); }
+
+/* ===== CAB SELECT ===== */
+cabList.querySelectorAll('.cab-opt').forEach(opt => {
+  opt.addEventListener('click', () => {
+    cabList.querySelectorAll('.cab-opt').forEach(o => o.classList.remove('selected'));
+    opt.classList.add('selected');
+    cabType = opt.dataset.type;
+    cabFare = parseInt(opt.dataset.fare);
+    cabLabel = opt.querySelector('b').textContent;
+    confirmBtn.textContent = 'Confirm ' + cabLabel + ' • ₹' + cabFare;
+  });
+});
+
+/* ===== BOOKING ===== */
+confirmBtn.addEventListener('click', startBooking);
+
+function startBooking() {
+  if (state !== 'idle') return;
+  state = 'searching';
+  carRig.visible = false;
+  routeTopMat.opacity = 0.85;
+  hideMapBadge();
+
+  overlay.classList.add('show');
+  ovTitle.textContent = 'Finding your cab…';
+  ovSub.textContent = 'Looking for a ' + cabLabel + ' near you';
+
+  setTimeout(() => {
+    ovTitle.textContent = 'Driver assigned';
+    ovSub.textContent = 'Rajesh K. • Swift Sedan • TN 58 AB 1234';
+    setTimeout(() => {
+      overlay.classList.remove('show');
+      startRide();
+    }, ASSIGN_MS);
+  }, SEARCH_MS);
+}
+
+function startRide() {
+  state = 'driving';
+  ridePhase = 'approach';
+  rideStartMs = performance.now();
+  speed = accel = yawRate = 0;
+  prevPos.copy(path.getPointAt(0));
+  carRig.position.copy(prevPos);
+  carRig.visible = true;
+
+  setStage('ride');
+  rideStatus.classList.remove('arrived');
+  rideTitle.textContent = 'Your driver is on the way';
+  rideEta.textContent = '1:00';
+  rideBar.style.width = '0%';
+  driverName.textContent = 'Rajesh K.';
+  driverCar.textContent = '4.9 ★ • Swift ' + cabLabel + ', Yellow';
+  driverPlate.textContent = 'TN 58 AB 1234';
+
+  showMapBadge('Driver approaching pickup');
+}
+
+function arriveAtPickup() {
+  ridePhase = 'journey';
+  rideTitle.textContent = 'On the way to drop';
+  showMapBadge('Heading to drop');
+}
+
+function rideCompleted() {
+  state = 'completed';
+  rideStatus.classList.add('arrived');
+  rideTitle.textContent = 'Arrived at your drop';
+  rideEta.textContent = 'Now';
+  hideMapBadge();
+
+  setTimeout(() => {
+    setStage('rating');
+    fareAmount.innerHTML = '₹' + cabFare + '<small>Total fare • ' + cabLabel + '</small>';
+    ratingSub.textContent = 'Drop: ' + (dropInput.value.trim() || 'Central Mall, Anna Salai');
+  }, 1400);
+}
+
+/* ===== CANCEL / RATING / RESET ===== */
+cancelBtn.addEventListener('click', () => {
+  if (state !== 'driving') return;
+  showToast('Ride cancelled');
+  resetToHome();
+});
+
+let chosenRating = 0;
+stars.forEach(s => s.addEventListener('click', () => {
+  chosenRating = parseInt(s.dataset.v);
+  stars.forEach(x => x.classList.toggle('active', parseInt(x.dataset.v) <= chosenRating));
+}));
+tips.forEach(t => t.addEventListener('click', () => {
+  tips.forEach(x => x.classList.remove('active'));
+  t.classList.add('active');
+}));
+doneBtn.addEventListener('click', () => {
+  showToast(chosenRating ? 'Thanks for ' + chosenRating + '★' : 'Thanks!');
+  resetToHome();
+});
+
+function resetToHome() {
+  state = 'idle';
+  ridePhase = 'approach';
+  carRig.visible = false;
+  chosenRating = 0;
+  stars.forEach(x => x.classList.remove('active'));
+  tips.forEach(x => x.classList.remove('active'));
+  setStage('booking');
+  rideStatus.classList.remove('arrived');
+  hideMapBadge();
+  prevPos.copy(path.getPointAt(0));
+  carRig.position.copy(prevPos);
+}
+
+/* ===== MAIN LOOP ===== */
+function loop(now) {
+  requestAnimationFrame(loop);
+  const dt = Math.min((now - lastT) / 1000, 0.05);
+  lastT = now;
+  const eNow = now / 1000;
+
+  // pin pulse animation
+  pickupMarker.bob.position.y = Math.sin(eNow * 2.4) * 0.15;
+  dropMarker.bob.position.y = Math.sin(eNow * 2.4 + 1) * 0.15;
+  [pickupMarker, dropMarker].forEach(m => {
+    const k = (eNow * 0.9) % 1;
+    m.ring.scale.setScalar(1 + k * 1.6);
+    m.ringMat.opacity = 0.7 * (1 - k);
+  });
+
+  if (state === 'driving' || state === 'arrived' || state === 'completed') {
+    const elapsed = (now - rideStartMs) / 1000;
+    const totalT = ROUTE_SECONDS;
+    const t1End = totalT * 0.35;
+    const t2End = totalT;
+
+    let p;
+    if (elapsed < t1End) {
+      // approach pickup
+      const local = elapsed / t1End;
+      p = easeOutCubic(local) * PICKUP_T;
+    } else if (elapsed < t2End) {
+      // journey to drop
+      const local = (elapsed - t1End) / (t2End - t1End);
+      p = PICKUP_T + easeInOut(local) * (DROP_T - PICKUP_T);
+      if (ridePhase === 'approach' && local > 0.02) arriveAtPickup();
+    } else {
+      p = DROP_T;
+      if (state === 'driving') rideCompleted();
+    }
+
+    const u = clamp(p, 0, 0.999);
+    const pos = path.getPointAt(u);
+    const tan = path.getTangentAt(u);
+    const newSpeed = pos.distanceTo(prevPos) / dt;
+
+    accel += ((newSpeed - speed) / dt - accel) * 0.1;
+    speed += (newSpeed - speed) * 0.2;
+    prevPos.copy(pos);
+    carRig.position.copy(pos);
+
+    // face travel direction (top-down)
+    const targetYaw = Math.atan2(-tan.z, tan.x);
+    const dy = Math.atan2(Math.sin(targetYaw - carRig.rotation.y),
+                          Math.cos(targetYaw - carRig.rotation.y));
+    carRig.rotation.y += dy * 0.22;
+    yawRate += ((dy * 0.22) / dt - yawRate) * 0.1;
+
+    // subtle body roll
+    carYaw.rotation.z = clamp(accel * 0.002, -0.04, 0.03);
+    carYaw.rotation.x = clamp(yawRate * speed * 0.0006, -0.035, 0.035);
+    carYaw.position.y = Math.sin(elapsed * 40) * 0.004 * Math.min(speed / 20, 1);
+
+    // progress
+    rideBar.style.width = (p * 100).toFixed(1) + '%';
+
+    if (state !== 'completed') {
+      if (ridePhase === 'approach') {
+        const ap = Math.min(elapsed / t1End, 1);
+        const secs = Math.max(0, (1 - ap) * 60);
+        rideEta.textContent = Math.floor(secs / 60) + ':' +
+          String(Math.floor(secs % 60)).padStart(2, '0');
+      } else {
+        const js = Math.max(0, (1 - p) * 180);
+        rideEta.textContent = Math.floor(js / 60) + ':' +
+          String(Math.floor(js % 60)).padStart(2, '0');
+      }
+    }
+
+    // camera: top-down close follow (car BIG in frame)
+    const targetPos = pos.clone().add(new THREE.Vector3(0, 15, 11));
+    camPos.lerp(targetPos, 0.06);
+    camera.position.copy(camPos);
+
+    const focus = pos.clone();
+    focus.y = 0;
+    lookAtPt.lerp(focus, 0.12);
+    camera.lookAt(lookAtPt);
+
+  } else {
+    // idle: static top-down overview centred on route
+    camPos.set(0, 28, 22);
+    camera.position.copy(camPos);
+    camera.lookAt(0, 0, 0);
+  }
+
+  renderer.render(scene, camera);
+}
+
+/* ===== BOOT ===== */
+carRig.visible = false;
+setStage('booking');
+requestAnimationFrame(t => { lastT = t; loop(t); });
+
+addEventListener('resize', () => {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+});
+</script>
+</body>
+</html>
